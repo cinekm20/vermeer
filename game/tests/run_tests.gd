@@ -57,11 +57,13 @@ func _ready() -> void:
 	_test_plantation_tiles_are_exclusive_between_players()
 	_test_water_pump_prevents_weather_crisis_and_boosts_yield()
 	_test_difficulty_scales_plantation_yield()
+	_test_hire_right_before_harvest_no_longer_gives_full_yield()
 	_test_difficulty_very_easy_disables_weather_risk()
 	_test_goods_spoil_after_a_year_in_storage()
 	_test_contraband_crop_restricted_and_confiscatable()
 	_test_bonus_paintings_available_and_awardable()
 	_test_auctions_can_select_bonus_painting_when_available()
+	_test_auctions_weighted_draw_favors_less_seen_numbers()
 	_test_world_events_reform_queued()
 	_test_market_shock_crash_and_boom()
 	_test_yearly_report_populated_on_new_year()
@@ -376,6 +378,11 @@ func _test_water_pump_prevents_weather_crisis_and_boosts_yield() -> void:
 	PlayerPlantations.plant_tile(idx, 0, "tobacco")
 	PlayerPlantations.hire_workers(idx, 500)
 	PlayerPlantations.plantations[idx]["last_harvest_day"] = Players.active_day() - 30
+	## Plon liczy się teraz ze ŚREDNIEJ załogi w czasie (worker_days_accum,
+	## patrz PlayerPlantations.calculate_harvest) — bez rzeczywistego upływu
+	## czasu (apply_player_days_elapsed) ten licznik zostaje na 0, więc trzeba
+	## go tu ustawić ręcznie, żeby odzwierciedlić "500 robotników przez 30 dni".
+	PlayerPlantations.plantations[idx]["worker_days_accum"] = 500 * 30.0
 	var with_pump := PlayerPlantations.calculate_harvest(idx)
 	PlayerPlantations.plantations[idx]["has_water_pump"] = false
 	var without_pump := PlayerPlantations.calculate_harvest(idx)
@@ -402,6 +409,10 @@ func _test_difficulty_scales_plantation_yield() -> void:
 	PlayerPlantations.plant_tile(idx, 0, "tobacco")
 	PlayerPlantations.hire_workers(idx, 500)
 	PlayerPlantations.plantations[idx]["last_harvest_day"] = Players.active_day() - 30
+	## Patrz komentarz w _test_water_pump_prevents_weather_crisis_and_boosts_yield
+	## wyżej — worker_days_accum trzeba ustawić ręcznie, skoro test omija
+	## apply_player_days_elapsed.
+	PlayerPlantations.plantations[idx]["worker_days_accum"] = 500 * 30.0
 
 	Difficulty.reset_new_game(Difficulty.Level.VERY_HARD)  # mnożnik ×1,5
 	var amount_very_hard: int = PlayerPlantations.calculate_harvest(idx).get("tobacco", 0)
@@ -413,6 +424,56 @@ func _test_difficulty_scales_plantation_yield() -> void:
 	_assert(amount_very_hard > 0, "VERY_HARD daje niezerowy plon (baza testu)")
 	_assert(absi(amount_very_easy - int(amount_very_hard * expected_ratio)) <= 1, "VERY_EASY daje ~%.2f× plon VERY_HARD (stosunek mnożników)" % expected_ratio)
 	_assert(amount_very_easy > amount_very_hard, "VERY_EASY plonuje więcej niż VERY_HARD")
+
+
+## Regresja na furtkę znalezioną podczas symulacji pełnej rozgrywki:
+## zatrudnienie pełnej załogi TUŻ PRZED zbiorem, a zwolnienie jej ZARAZ PO
+## (bez żadnego rzeczywistego upływu czasu z tą załogą) dawało kiedyś PEŁNY
+## plon praktycznie za darmo — płaca liczy się retroaktywnie tylko za dni,
+## które faktycznie upłynęły (apply_player_days_elapsed), a calculate_harvest
+## liczyła worker_factor z CHWILOWEJ liczby robotników w momencie zbioru, nie
+## z tego, ilu ich było przez CAŁY okres od ostatnich zbiorów. Naprawa: plon
+## liczy się teraz ze ŚREDNIEJ załogi w czasie (worker_days_accum) — więc
+## "pusta" załoga przez większość okresu i tylko chwilowe zatrudnienie tuż
+## przed zbiorem musi dać WYRAŹNIE mniejszy plon niż ciągłe zatrudnienie przez
+## cały ten sam okres.
+func _test_hire_right_before_harvest_no_longer_gives_full_yield() -> void:
+	print("-- PlayerPlantations: zatrudnienie tuż przed zbiorem NIE daje już pełnego plonu (naprawiona furtka) --")
+	PlayerPlantations.reset_new_game()
+	Calendar.reset_new_game()
+	Economy.reset_new_game()
+	Players.reset_new_game(1)
+	var idx := PlayerPlantations.found_plantation("richmond")
+	PlayerPlantations.city_grids["richmond"]["river"].fill(false)
+	PlayerPlantations.plantations[idx]["has_water_pump"] = true  # bez ryzyka pogodowego w tym pomiarze
+	PlayerPlantations.buy_tile(idx, 0)
+	PlayerPlantations.plant_tile(idx, 0, "tobacco")
+
+	## Scenariusz "furtki": 30 dni bez żadnej załogi (workers=0 przez cały ten
+	## czas), dopiero na sam koniec — TUŻ przed harvest() — zatrudnienie pełnej
+	## załogi.
+	Players.advance_active_player_time(30)
+	PlayerPlantations.hire_workers(idx, 500)
+	var exploit_harvest: int = PlayerPlantations.harvest(idx).get("tobacco", 0)
+
+	## Scenariusz uczciwy: dokładnie ta sama plantacja/pole/30 dni, ale załoga
+	## zatrudniona przez CAŁY okres od samego początku.
+	PlayerPlantations.reset_new_game()
+	Calendar.reset_new_game()
+	Economy.reset_new_game()
+	Players.reset_new_game(1)
+	idx = PlayerPlantations.found_plantation("richmond")
+	PlayerPlantations.city_grids["richmond"]["river"].fill(false)
+	PlayerPlantations.plantations[idx]["has_water_pump"] = true
+	PlayerPlantations.buy_tile(idx, 0)
+	PlayerPlantations.plant_tile(idx, 0, "tobacco")
+	PlayerPlantations.hire_workers(idx, 500)
+	Players.advance_active_player_time(30)
+	var honest_harvest: int = PlayerPlantations.harvest(idx).get("tobacco", 0)
+
+	_assert(honest_harvest > 0, "ciągłe zatrudnienie przez 30 dni daje niezerowy plon (baza testu)")
+	_assert(exploit_harvest == 0, "zatrudnienie TUŻ przed zbiorem (bez wcześniejszej pracy) daje plon 0 — furtka zamknięta")
+	_assert(exploit_harvest < honest_harvest, "plon z furtki wyraźnie niższy niż z uczciwego, ciągłego zatrudnienia")
 
 
 ## Difficulty.risk_multiplier() == 0.0 na VERY_EASY sprawia, że `randf() < X * 0.0`
@@ -563,6 +624,47 @@ func _test_auctions_can_select_bonus_painting_when_available() -> void:
 			saw_bonus = true
 			break
 	_assert(saw_bonus, "gdy obrazy bonusowe dostępne, aukcja w końcu wybiera jeden z nich (BONUS_PAINTING_CHANCE w ~500 próbach)")
+
+
+## Znalezione podczas symulacji pełnej rozgrywki: numer obrazu na aukcji był
+## losowany JEDNOSTAJNIE z całych 40 (bez preferencji dla brakujących), więc
+## "ostatni" obraz w kolekcji potrafił nie pojawić się przez lata gry mimo
+## dziesiątek aukcji w tym czasie. Naprawa: waga losowania numeru = 1/(ile
+## razy już padł + 1), patrz Auctions._pick_weighted_painting_number —
+## sprawdzone tu statystycznie (nie da się tego zweryfikować na pojedynczym
+## losowaniu): numer, który jeszcze ani razu nie padł, musi być wybierany
+## ZDECYDOWANIE częściej niż numer, który padał już wielokrotnie.
+func _test_auctions_weighted_draw_favors_less_seen_numbers() -> void:
+	print("-- Auctions: losowanie numeru obrazu faworyzuje rzadziej wylosowane (naprawiona 'ostatnia sztuka') --")
+	Paintings.reset_new_game()
+	Calendar.reset_new_game()
+	Auctions.reset_new_game()
+	Players.reset_new_game(1)
+	for number in Paintings.BONUS_CATALOG.keys():
+		Paintings.award_bonus_painting(number)  # wyłącza gałąź bonusową — test ma być deterministyczny
+
+	var seen_7 := 0
+	const TRIALS := 500
+	for i in TRIALS:
+		## Licznik ustawiany OD NOWA przed KAŻDĄ próbą (nie akumulowany między
+		## próbami) — inaczej samo losowanie numeru 7 podnosiłoby JEGO WŁASNY
+		## licznik i samoczynnie wyrównywałoby wagi w miarę prób (system
+		## "samo-balansujący się"), zaniżając zmierzoną przewagę względem
+		## pojedynczego, niezależnego losowania, które faktycznie chcemy tu
+		## zweryfikować.
+		Auctions.painting_draw_count.clear()
+		for number in Paintings.CATALOG.size():
+			Auctions.painting_draw_count[number + 1] = 100  # wszystkie "wyeksploatowane"...
+		Auctions.painting_draw_count.erase(7)  # ...oprócz numeru 7, który jeszcze ani razu nie padł
+
+		Auctions.current_painting_number = Auctions.NO_PAINTING_SELECTED
+		if Auctions.get_current_painting_number() == 7:
+			seen_7 += 1
+
+	## Losowanie jednostajne dawałoby ~2,5% (1/40); numer 7 (waga 1) kontra 39
+	## numerów o wadze 1/101 każdy sumuje się do oczekiwanych ~72% — próg 40%
+	## to bezpieczny margines na losowość przy 500 próbach.
+	_assert(seen_7 > TRIALS * 0.4, "numer, który jeszcze nie padł, wybierany W ZDECYDOWANEJ WIĘKSZOŚCI prób (%d/%d), nie ~1/40" % [seen_7, TRIALS])
 
 
 func _test_world_events_reform_queued() -> void:

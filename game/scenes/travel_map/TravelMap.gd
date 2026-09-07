@@ -354,9 +354,35 @@ func _on_pin_selected(city_id: String) -> void:
 	selected_city = city_id
 	_update_pin_selection_visuals()
 	var vehicle_name := tr("pociągiem") if preview["vehicle"] == Travel.Vehicle.TRAIN else tr("samolotem")
-	info_label.text = tr("Podróż do %s: %.1f dnia (%s)") % [Cities.get_city_name(city_id), preview["days"], vehicle_name]
+	var text := tr("Podróż do %s: %.1f dnia (%s)") % [Cities.get_city_name(city_id), preview["days"], vehicle_name]
+	var wage_warning := _worker_wage_warning()
+	if wage_warning != "":
+		text += "\n" + wage_warning
+	info_label.text = text
 	confirm_button.visible = true
 	cancel_button.visible = true
+
+
+## Ostrzeżenie o dniówkach, które nadal będą naliczane pod nieobecność gracza
+## (patrz PlayerPlantations.apply_player_days_elapsed — płaca liczy się
+## codziennie, niezależnie od tego, czy gracz jest fizycznie na miejscu).
+## Mechanika ZOSTAJE bez zmian (zgłoszone przez użytkownika: "ma być płaca
+## tak samo naliczana... jak sie jest i nie jest") — to WYŁĄCZNIE informacja
+## o tym, ile to będzie kosztować, żeby gracz mógł świadomie zdecydować, czy
+## zwolnić załogę przed wyjazdem. Pusty string, jeśli w mieście, z którego
+## gracz wyjeżdża, nie ma jego plantacji albo nie ma tam zatrudnionych
+## robotników — nie ma czym straszyć.
+func _worker_wage_warning() -> String:
+	var idx := PlayerPlantations.find_plantation_index(Travel.current_city)
+	if idx == -1:
+		return ""
+	var workers: int = int(PlayerPlantations.plantations[idx]["workers"])
+	if workers <= 0:
+		return ""
+	var daily_cost := workers * PlayerPlantations.WORKER_DAILY_WAGE
+	return tr("Uwaga: %d robotników w %s nadal będzie kosztować %.0f M/dzień, nawet pod Twoją nieobecność.") % [
+		workers, Cities.get_city_name(Travel.current_city), daily_cost,
+	]
 
 
 func _on_confirm_pressed() -> void:

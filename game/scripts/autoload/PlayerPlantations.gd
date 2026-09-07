@@ -141,6 +141,13 @@ func apply_player_days_elapsed(days_elapsed: int) -> void:
 		if wage_cost > 0.0:
 			Economy.player_money -= wage_cost
 
+		## Robotniko-dni narosłe OD OSTATNICH ZBIORÓW (patrz calculate_harvest,
+		## harvest()) — liczone TU, z faktyczną liczbą robotników w KAŻDYM z
+		## tych dni, więc zatrudnienie tuż przed zbiorem (a zwolnienie zaraz
+		## po) nie daje już pełnego plonu za darmo: dni spędzone z zerową
+		## załogą wliczają się do średniej tak samo jak dni z pełną.
+		plantation["worker_days_accum"] = float(plantation.get("worker_days_accum", 0.0)) + int(plantation["workers"]) * days_elapsed
+
 		## Strajk: brak wypłat (gotówka na minusie) PRZY zatrudnionej załodze —
 		## zgłoszone przez użytkownika. Sprawdzane PO odjęciu tej płacy, żeby
 		## strajk reagował na FAKTYCZNY, bieżący stan konta, nie sprzed niej.
@@ -261,6 +268,7 @@ func found_plantation(city_id: String) -> int:
 		"stored_since": {},  ## uprawa -> dzień, od którego leży bieżący zapas — patrz _apply_spoilage
 		"last_harvest_day": Players.active_day(),
 		"crisis_hits": 0,  ## ile razy strajk/zamieszki uderzyły w tę plantację — patrz _apply_crisis_hit
+		"worker_days_accum": 0.0,  ## robotniko-dni od ostatnich zbiorów — patrz calculate_harvest/harvest
 	})
 	return plantations.size() - 1
 
@@ -414,7 +422,14 @@ func calculate_harvest(plantation_index: int) -> Dictionary:
 	var result: Dictionary = {}
 	if days_since_harvest <= 0:
 		return result
-	var worker_factor: float = float(plantation["workers"]) / 500.0
+	## Plon liczy się ze ŚREDNIEJ załogi w czasie od ostatnich zbiorów (patrz
+	## worker_days_accum w apply_player_days_elapsed), NIE z chwilowej liczby
+	## robotników w momencie zbioru — bez tego zatrudnienie pełnej załogi tuż
+	## przed harvest() i zwolnienie jej zaraz po dawałoby pełny plon
+	## praktycznie za darmo (płaca liczy się retroaktywnie tylko za dni,
+	## które faktycznie upłynęły z zatrudnioną załogą).
+	var average_workers: float = float(plantation.get("worker_days_accum", 0.0)) / days_since_harvest
+	var worker_factor: float = average_workers / 500.0
 	var seasonal_factor: float = Crops.SEASONAL_YIELD_FACTOR[Calendar.get_month_for_day(Players.active_day())]
 	var time_factor: float = days_since_harvest / REFERENCE_PERIOD_DAYS
 	## Pompa wodna: +20% plonu CAŁEJ plantacji (WATER_PUMP_YIELD_BONUS) —
@@ -468,6 +483,7 @@ func harvest(plantation_index: int) -> Dictionary:
 		stored[crop] = int(stored.get(crop, 0)) + amounts[crop]
 	plantation["stored_since"] = stored_since
 	plantation["last_harvest_day"] = Players.active_day()
+	plantation["worker_days_accum"] = 0.0
 	return amounts
 
 

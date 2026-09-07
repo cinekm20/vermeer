@@ -40,6 +40,13 @@ var next_auction_day: int = 0
 ## ponownie) — dopóki resolve_and_reschedule() go nie wyzeruje.
 var current_painting_number: int = NO_PAINTING_SELECTED
 
+## number (1..Paintings.CATALOG.size()) -> ile razy dany numer już padł na
+## aukcji w tej rozgrywce — patrz get_current_painting_number/_pick_weighted_painting_number.
+## Numery bonusowe (ujemne, Paintings.BONUS_CATALOG) NIE są tu śledzone —
+## mają osobny, rzadki mechanizm (BONUS_PAINTING_CHANCE) i pulę bez powtórek
+## (Paintings.get_available_bonus_numbers), więc nie potrzebują ważenia.
+var painting_draw_count: Dictionary = {}
+
 
 func _ready() -> void:
 	Calendar.day_advanced.connect(_on_day_advanced)
@@ -47,6 +54,7 @@ func _ready() -> void:
 
 func reset_new_game() -> void:
 	current_painting_number = NO_PAINTING_SELECTED
+	painting_draw_count.clear()
 	_pick_new_schedule(0)
 
 
@@ -89,8 +97,34 @@ func get_current_painting_number() -> int:
 		if not available_bonus.is_empty() and randf() < BONUS_PAINTING_CHANCE:
 			current_painting_number = available_bonus[randi() % available_bonus.size()]
 		else:
-			current_painting_number = 1 + randi() % Paintings.CATALOG.size()
+			current_painting_number = _pick_weighted_painting_number()
+			painting_draw_count[current_painting_number] = int(painting_draw_count.get(current_painting_number, 0)) + 1
 	return current_painting_number
+
+
+## Losowanie numeru z katalogu (1..Paintings.CATALOG.size()), ważone
+## odwrotnie proporcjonalnie do tego, ile razy dany numer już padł w tej
+## rozgrywce (painting_draw_count) — im rzadziej dotąd padał, tym większa
+## szansa. Bez tego jednostajny rozkład sprawiał, że "ostatni" brakujący
+## obraz w kolekcji potrafił nie pojawić się przez lata gry mimo dziesiątek
+## aukcji w tym czasie. Nadal CAŁKOWICIE losowe (nie gwarantowane) i nadal
+## mogą paść numery, które gracz już ma — to konieczne dla mechaniki
+## podróbek (Paintings.is_forgery_by_duplicate), tylko z mniejszą wagą, gdy
+## dany numer padał już wielokrotnie.
+func _pick_weighted_painting_number() -> int:
+	var weights: Array[float] = []
+	var total_weight := 0.0
+	for i in Paintings.CATALOG.size():
+		var w: float = 1.0 / (float(painting_draw_count.get(i + 1, 0)) + 1.0)
+		weights.append(w)
+		total_weight += w
+	var roll := randf() * total_weight
+	var cumulative := 0.0
+	for i in weights.size():
+		cumulative += weights[i]
+		if roll < cumulative:
+			return i + 1
+	return Paintings.CATALOG.size()  ## fallback na zaokrąglenie float, praktycznie nieosiągalne
 
 
 ## Zamyka bieżący termin (ktoś wygrał albo nikt nie licytował) i losuje

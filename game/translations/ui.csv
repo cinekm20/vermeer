@@ -127,6 +127,7 @@ Jesteś w: %s — dotknij pinezkę celu podróży,You are in: %s — tap the pin
 pociągiem,by train,mit dem Zug
 samolotem,by plane,mit dem Flugzeug
 Podróż do %s: %.1f dnia (%s),Travel to %s: %.1f days (%s),Reise nach %s: %.1f Tage (%s)
+"Uwaga: %d robotników w %s nadal będzie kosztować %.0f M/dzień, nawet pod Twoją nieobecność.","Warning: %d workers in %s will still cost %.0f M/day, even while you're away.","Achtung: %d Arbeiter in %s kosten weiterhin %.0f M/Tag, auch in Ihrer Abwesenheit."
 Podróż,Travel,Reise
 Pomiń »,Skip »,Überspringen »
 Tura: %s,Turn: %s,Zug: %s
